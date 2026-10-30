@@ -1,9 +1,9 @@
 {
-  "id": "./",
+  "id": "./?app=nightjar-1",
   "name": "Nightjar",
   "short_name": "Nightjar",
   "description": "A local-first player for high-quality audio.",
-  "start_url": "./",
+  "start_url": "./?app=nightjar-1",
   "scope": "./",
   "display": "standalone",
   "orientation": "any",
