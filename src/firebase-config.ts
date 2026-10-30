@@ -5,7 +5,14 @@
 // Leave it as null and Nightjar runs without accounts.
 import type { FirebaseOptions } from "firebase/app";
 
-const pasted: FirebaseOptions | null = null;
+const pasted: FirebaseOptions | null = {
+  apiKey: "AIzaSyA89Ovi9vr58yIq-Nh2hkSTNAXFdhN_Fqw",
+  authDomain: "nightjar-62ae3.firebaseapp.com",
+  projectId: "nightjar-62ae3",
+  storageBucket: "nightjar-62ae3.firebasestorage.app",
+  messagingSenderId: "715702524187",
+  appId: "1:715702524187:web:02cae591a9c1ae5d39dbbe",
+};
 
 // A build can also pass the settings as JSON in VITE_FIREBASE_CONFIG (used for local testing).
 const fromEnv = import.meta.env.VITE_FIREBASE_CONFIG as string | undefined;
