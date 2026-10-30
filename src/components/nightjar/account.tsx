@@ -1,4 +1,7 @@
-import { backupNow, connectDrive, setBackup, signIn, signOutOfAccount, useSync } from "@/lib/nightjar/sync-state";
+import { useMemo } from "react";
+import { formatBytes } from "@/lib/nightjar/format";
+import { useStore } from "@/lib/nightjar/store";
+import { backupNow, connectDrive, downloadAll, setBackup, signIn, signOutOfAccount, useSync } from "@/lib/nightjar/sync-state";
 
 const STATUS: Record<string, { text: string; tone: "good" | "busy" | "bad" | "" }> = {
   loading: { text: "Starting…", tone: "busy" },
@@ -12,6 +15,9 @@ const STATUS: Record<string, { text: string; tone: "good" | "busy" | "bad" | "" 
 
 export function AccountCard() {
   const s = useSync();
+  const tracks = useStore((st) => st.tracks);
+  const cloud = useMemo(() => tracks.filter((t) => t.storage === "cloud" && t.driveId), [tracks]);
+  const cloudBytes = cloud.reduce((n, t) => n + (t.bytes || 0), 0);
   if (!s.configured) {
     return (
       <section className="nj-card">
@@ -53,15 +59,37 @@ export function AccountCard() {
             <div><dt>Backed up to Google Drive</dt><dd>{s.songsBackedUp}</dd></div>
             {s.backup && <div><dt>Waiting to back up from this device</dt><dd>{s.songsWaiting}</dd></div>}
           </dl>
+          <dl className="nj-facts">
+            <div>
+              <dt>Google Drive</dt>
+              <dd>{s.alwaysConnected ? "Always connected ✓" : s.driveConnected ? "Connected (renews when you tap)" : "Needs connecting"}</dd>
+            </div>
+          </dl>
           <label className="nj-switch">
             <input type="checkbox" checked={s.backup} onChange={(e) => setBackup(e.target.checked)} />
             Back up my songs to Google Drive
           </label>
           {s.uploading && <p className="nj-muted nj-small" style={{ margin: 0 }}>Uploading “{s.uploading}”…</p>}
+          {s.downloadingAll && (
+            <p className="nj-muted nj-small" style={{ margin: 0 }}>
+              Downloading to this phone: {s.downloadingAll.done} of {s.downloadingAll.total}…
+            </p>
+          )}
           <div className="nj-row">
-            {!s.driveConnected && (
+            {s.helper && !s.alwaysConnected && (
+              <button className="nj-btn nj-btn-primary" onClick={() => connectDrive()}>
+                Keep Google Drive connected
+              </button>
+            )}
+            {!s.helper && !s.driveConnected && (
               <button className="nj-btn nj-btn-primary" onClick={() => connectDrive()}>
                 Connect Google Drive
+              </button>
+            )}
+            {cloud.length > 0 && !s.downloadingAll && (
+              <button className="nj-btn" onClick={() => downloadAll()}>
+                Download all to this phone ({cloud.length}
+                {cloudBytes ? ` · ${formatBytes(cloudBytes)}` : ""})
               </button>
             )}
             {s.driveConnected && s.backup && s.songsWaiting > 0 && !s.uploading && (
@@ -74,7 +102,11 @@ export function AccountCard() {
             </button>
           </div>
           <p className="nj-muted nj-small" style={{ margin: 0 }}>
-            Google only lets Nightjar into your Drive for about an hour at a time. If uploads or downloads stop, tap “Connect Google Drive”. Nightjar can only see the files it made.
+            {s.alwaysConnected
+              ? "Drive renews by itself in the background on all your devices. Nightjar can only see the files it made."
+              : s.helper
+                ? "Tap “Keep Google Drive connected” once and Drive renews by itself from then on, on all your devices."
+                : "Google only lets Nightjar into Drive for an hour at a time; it renews when you tap a song. Nightjar can only see the files it made."}
           </p>
         </>
       )}

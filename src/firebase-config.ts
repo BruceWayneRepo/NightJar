@@ -19,5 +19,8 @@ const fromEnv = import.meta.env.VITE_FIREBASE_CONFIG as string | undefined;
 
 export const firebaseConfig: FirebaseOptions | null = fromEnv ? (JSON.parse(fromEnv) as FirebaseOptions) : pasted;
 
+// Google sign-in key that Firebase made for this project (public). Used for the "stay connected to Drive" sign-in.
+export const googleClientId = "715702524187-oq2mcemepdt8jegg8ev786qmd5qcr960.apps.googleusercontent.com";
+
 // Local testing only: talk to the Firebase emulators on this computer.
 export const useEmulators = import.meta.env.VITE_FIREBASE_EMULATORS === "1";

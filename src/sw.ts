@@ -31,7 +31,8 @@ cleanupOutdatedCaches();
 precacheAndRoute(self.__WB_MANIFEST);
 
 // 3. Any page load inside the app opens the saved app shell.
-registerRoute(new NavigationRoute(createHandlerBoundToURL("index.html")));
+//    (Except Google's return page for Drive sign-in, and the helper endpoints.)
+registerRoute(new NavigationRoute(createHandlerBoundToURL("index.html"), { denylist: [/\/drive-callback\.html/, /\/api\//] }));
 
 // 4. Fonts.
 registerRoute(

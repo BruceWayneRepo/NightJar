@@ -18,6 +18,12 @@ export type SyncState = {
   /** Songs on this device waiting to go up to Drive. */
   songsWaiting: number;
   uploading: string | null;
+  /** The always-connected Drive helper is set up on this site. */
+  helper: boolean;
+  /** Drive renews by itself (helper set up and you've connected once). */
+  alwaysConnected: boolean;
+  /** "Download all to this phone" progress. */
+  downloadingAll: { done: number; total: number } | null;
 };
 
 let state: SyncState = {
@@ -31,6 +37,9 @@ let state: SyncState = {
   songsBackedUp: 0,
   songsWaiting: 0,
   uploading: null,
+  helper: false,
+  alwaysConnected: false,
+  downloadingAll: null,
 };
 
 const listeners = new Set<() => void>();
@@ -75,3 +84,4 @@ export const signOutOfAccount = () => mod?.signOutOfAccount();
 export const connectDrive = () => mod?.connectDrive();
 export const setBackup = (on: boolean) => mod?.setBackup(on);
 export const backupNow = () => mod?.backupNow();
+export const downloadAll = () => mod?.downloadAll();

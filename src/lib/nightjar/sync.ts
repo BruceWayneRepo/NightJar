@@ -33,11 +33,12 @@ import {
   type SnapshotMetadata,
   type Unsubscribe,
 } from "firebase/firestore";
-import { useEmulators } from "@/firebase-config";
-import { DRIVE_SCOPE, DriveAuthError, clearDriveToken, downloadSong, driveToken, setDriveToken, uploadSong } from "./drive";
+import { googleClientId, useEmulators } from "@/firebase-config";
+import { DRIVE_SCOPE, DriveAuthError, clearDriveToken, downloadSong, driveToken, getDriveToken, setDriveToken, setTokenRefresher, uploadSong } from "./drive";
 import { idbGet } from "./idb";
 import { coverThumb, sameSong } from "./songkey";
 import {
+  downloadTrack,
   ensureSongKeys,
   getState,
   setCloudTracks,
@@ -69,7 +70,7 @@ type RemoteSong = {
   driveId: string | null;
 };
 type RemotePlaylist = { name: string; songs: string[]; createdAt: number; updatedAt: number; deleted?: boolean };
-type RemoteUser = { settings?: SyncedSettings; settingsUpdatedAt?: number; backup?: boolean };
+type RemoteUser = { settings?: SyncedSettings; settingsUpdatedAt?: number; backup?: boolean; driveSealed?: string | null };
 
 let auth: Auth;
 let db: Firestore;
@@ -84,6 +85,11 @@ let userDoc: RemoteUser = {};
 let songsLoaded = false;
 let playlistsLoaded = false;
 const pending = { user: false, songs: false, playlists: false };
+/** The always-connected Drive helper (Vercel functions) answers on this site. */
+let helper = false;
+/** A Google window for Drive is open; downloads wait for it instead of failing. */
+let connecting = false;
+let consentState: string | null = null;
 
 /* ------------------------------------------------------------------ */
 /* Start + sign-in                                                     */
@@ -98,6 +104,7 @@ function provider(email?: string | null) {
 
 function keepToken(cred: UserCredential | null) {
   const token = cred ? GoogleAuthProvider.credentialFromResult(cred)?.accessToken : null;
+  connecting = false;
   if (token) {
     setDriveToken(token);
     setSync({ driveConnected: true });
@@ -132,6 +139,23 @@ export function start(config: FirebaseOptions) {
   }
   setSync({ driveConnected: Boolean(driveToken()) });
   void getRedirectResult(auth).then(keepToken).catch(() => {});
+  setTokenRefresher(renewViaHelper);
+  // The helper only runs on the Vercel site; GitHub Pages can't host it.
+  if (!location.hostname.endsWith("github.io")) void fetch("api/drive/status", { cache: "no-store" })
+    .then((r) => (r.ok ? r.json() : null))
+    .then((d: { configured?: boolean } | null) => {
+      helper = Boolean(d?.configured);
+      refreshDriveState();
+    })
+    .catch(() => {});
+  window.addEventListener("message", (e) => {
+    if (e.origin === location.origin && e.data?.type === "nightjar-drive") void finishConsent(e.data);
+  });
+  window.addEventListener("storage", (e) => {
+    if (e.key === "nightjar.driveConsent" && e.newValue) void finishConsent(JSON.parse(e.newValue));
+  });
+  document.addEventListener("visibilitychange", checkStoredConsent);
+  window.addEventListener("focus", checkStoredConsent);
   onAuthStateChanged(auth, (user) => (user ? void attach(user) : detach()));
   window.addEventListener("online", refreshStatus);
   window.addEventListener("offline", refreshStatus);
@@ -157,12 +181,174 @@ export function signIn() {
 export function connectDrive() {
   const user = auth.currentUser;
   if (!user) return;
+  connecting = true;
+  if (helper) {
+    startConsent(user.email);
+    return;
+  }
   reauthenticateWithPopup(user, provider(user.email))
     .then(keepToken)
     .catch((e) => {
+      connecting = false;
       const code = (e as { code?: string })?.code ?? "";
       if (code !== "auth/popup-closed-by-user" && code !== "auth/cancelled-popup-request") toast(friendly(e));
     });
+}
+
+/* ------------------------------------------------------------------ */
+/* Always-connected Drive (helper on Vercel)                           */
+/* ------------------------------------------------------------------ */
+
+const canRenewSilently = () => helper && Boolean(userDoc.driveSealed);
+
+function refreshDriveState() {
+  setSync({ helper, alwaysConnected: canRenewSilently(), driveConnected: Boolean(driveToken()) || canRenewSilently() });
+}
+
+/** One Google window, once: "let Nightjar keep using your Drive files". Must run straight from a tap. */
+function startConsent(email: string | null) {
+  consentState = crypto.randomUUID();
+  const params = new URLSearchParams({
+    client_id: googleClientId,
+    redirect_uri: new URL("drive-callback.html", location.href).href.split("?")[0],
+    response_type: "code",
+    scope: DRIVE_SCOPE,
+    access_type: "offline",
+    prompt: "consent",
+    include_granted_scopes: "true",
+    state: consentState,
+  });
+  if (email) params.set("login_hint", email);
+  try {
+    localStorage.removeItem("nightjar.driveConsent");
+  } catch {
+    /* ignore */
+  }
+  const w = window.open(`https://accounts.google.com/o/oauth2/v2/auth?${params}`, "nightjar-drive", "popup,width=500,height=680");
+  if (!w) {
+    connecting = false;
+    toast("Your browser blocked the Google window. Allow pop-ups for Nightjar and try again.");
+  }
+  window.setTimeout(() => {
+    connecting = false;
+  }, 3 * 60_000);
+}
+
+function checkStoredConsent() {
+  if (!consentState) return;
+  try {
+    const raw = localStorage.getItem("nightjar.driveConsent");
+    if (raw) void finishConsent(JSON.parse(raw));
+  } catch {
+    /* ignore */
+  }
+}
+
+async function finishConsent(data: { code?: string | null; state?: string | null; error?: string | null }) {
+  if (!consentState || data.state !== consentState) return;
+  consentState = null;
+  try {
+    localStorage.removeItem("nightjar.driveConsent");
+  } catch {
+    /* ignore */
+  }
+  const user = auth.currentUser;
+  if (data.error || !data.code || !user) {
+    connecting = false;
+    if (data.error && data.error !== "access_denied") toast("Google Drive wasn’t connected. Please try again.");
+    return;
+  }
+  try {
+    const res = await fetch("api/drive/exchange", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ code: data.code, redirectUri: new URL("drive-callback.html", location.href).href.split("?")[0], idToken: await user.getIdToken() }),
+    });
+    const out = (await res.json()) as { access_token?: string; expires_in?: number; sealed?: string; error?: string };
+    if (out.access_token) setDriveToken(out.access_token, Math.max(60, (out.expires_in ?? 3600) - 300));
+    if (out.sealed && uid) {
+      userDoc = { ...userDoc, driveSealed: out.sealed };
+      await setDoc(doc(db, "users", uid), { driveSealed: out.sealed }, { merge: true });
+      toast("Google Drive will now stay connected on all your devices");
+    } else if (out.access_token) {
+      toast("Drive connected for an hour. To keep it connected, remove Nightjar at myaccount.google.com/permissions and connect again.");
+    } else {
+      toast("Google Drive wasn’t connected. Please try again.");
+    }
+  } catch {
+    toast("Couldn’t finish connecting Google Drive. Check your internet and try again.");
+  } finally {
+    connecting = false;
+    refreshDriveState();
+    void runBackup();
+  }
+}
+
+/** Ask the helper for a fresh one-hour key. No popup. */
+async function renewViaHelper(): Promise<string | null> {
+  const user = auth?.currentUser;
+  if (!canRenewSilently() || !user || !navigator.onLine) return null;
+  try {
+    const res = await fetch("api/drive/refresh", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sealed: userDoc.driveSealed, idToken: await user.getIdToken() }),
+    });
+    const out = (await res.json()) as { access_token?: string; expires_in?: number; error?: string };
+    if (out.access_token) {
+      setDriveToken(out.access_token, Math.max(60, (out.expires_in ?? 3600) - 300));
+      setSync({ driveConnected: true });
+      return out.access_token;
+    }
+    if (out.error === "reconnect" && uid) {
+      // You removed Nightjar's access in your Google account (or the key changed): one tap reconnects.
+      userDoc = { ...userDoc, driveSealed: null };
+      void setDoc(doc(db, "users", uid), { driveSealed: null }, { merge: true });
+      refreshDriveState();
+    }
+  } catch {
+    /* offline or helper unreachable: try again later */
+  }
+  return null;
+}
+
+/** Wait for a Drive key while a Google window is open (up to a limit). */
+async function waitForToken(ms: number) {
+  const until = Date.now() + ms;
+  while (Date.now() < until && connecting) {
+    await new Promise((r) => setTimeout(r, 500));
+    const t = driveToken();
+    if (t) return t;
+  }
+  return driveToken();
+}
+
+/** From a tap on a Drive-only song: renew Drive access now if it can't renew by itself. */
+function beforeCloudPlay() {
+  if (!uid || driveToken() || canRenewSilently() || connecting) return;
+  connectDrive();
+}
+
+/** "Download all to this phone": every song in your Drive, one by one. Call from a tap. */
+export function downloadAll() {
+  const list = getState().tracks.filter((t) => t.storage === "cloud" && ((t.songKey && remoteSongs.get(t.songKey)?.driveId) || t.driveId));
+  if (!list.length || getSync().downloadingAll) return;
+  beforeCloudPlay();
+  void (async () => {
+    let done = 0;
+    setSync({ downloadingAll: { done, total: list.length } });
+    for (const t of list) {
+      const ok = await downloadTrack(t.id, true);
+      if (!ok) {
+        toast(driveToken() ? `Couldn’t download “${t.title}”. Stopped; tap Download all to retry.` : "Download paused: Google Drive needs connecting (Settings).");
+        break;
+      }
+      done++;
+      setSync({ downloadingAll: { done, total: list.length } });
+    }
+    setSync({ downloadingAll: null });
+    if (done === list.length) toast(`All ${done} songs are now on this device`);
+  })();
 }
 
 export function signOutOfAccount() {
@@ -173,13 +359,13 @@ export function signOutOfAccount() {
 
 export function setBackup(on: boolean) {
   if (!uid) return;
-  if (on && !driveToken()) connectDrive();
+  if (on && !driveToken() && !canRenewSilently()) connectDrive();
   setSync({ backup: on });
   void setDoc(doc(db, "users", uid), { backup: on }, { merge: true });
 }
 
 export function backupNow() {
-  if (!driveToken()) {
+  if (!driveToken() && !canRenewSilently()) {
     connectDrive();
     return;
   }
@@ -292,6 +478,7 @@ async function attach(user: User) {
     void pushSongs();
   };
   syncHooks.downloadCloud = download;
+  syncHooks.beforeCloudPlay = beforeCloudPlay;
   syncHooks.inCloud = (key) => {
     const r = remoteSongs.get(key);
     return r ? { driveId: r.driveId ?? null } : null;
@@ -309,6 +496,7 @@ function detach(announce = true) {
   userDoc = {};
   syncHooks.playlistsChanged = syncHooks.settingsChanged = syncHooks.tracksChanged = undefined;
   syncHooks.downloadCloud = undefined;
+  syncHooks.beforeCloudPlay = undefined;
   syncHooks.inCloud = undefined;
   if (announce) {
     setCloudTracks([], new Map());
@@ -329,6 +517,7 @@ function applyUser(fromCache: boolean) {
     void setDoc(doc(db, "users", uid), { settings: { crossfade: s.crossfade, eqOn: s.eqOn, eqGains: s.eqGains }, settingsUpdatedAt: localAt }, { merge: true });
   }
   if (Boolean(userDoc.backup) !== getSync().backup) setSync({ backup: Boolean(userDoc.backup) });
+  refreshDriveState();
   void runBackup();
 }
 
@@ -437,8 +626,16 @@ async function runBackup() {
   if (!uid) return;
   const waiting = () =>
     getState().tracks.filter((t) => t.storage === "local" && t.songKey && remoteSongs.has(t.songKey) && !remoteSongs.get(t.songKey)!.driveId);
-  setSync({ songsWaiting: userDoc.backup ? waiting().length : 0, driveConnected: Boolean(driveToken()) });
-  if (!userDoc.backup || backingUp || !driveToken()) return;
+  const count = userDoc.backup ? waiting().length : 0;
+  setSync({ songsWaiting: count, driveConnected: Boolean(driveToken()) || canRenewSilently() });
+  if (!userDoc.backup || backingUp || !count) return;
+  backingUp = true;
+  const token = await getDriveToken();
+  backingUp = false;
+  if (!token) {
+    setSync({ driveConnected: false });
+    return;
+  }
   backingUp = true;
   const me = uid;
   try {
@@ -473,7 +670,8 @@ async function download(t: Track, quiet: boolean): Promise<Blob | null> {
     if (!quiet) toast(`“${t.title}” is only on your other device. Turn on song backup there to play it here.`);
     return null;
   }
-  if (!driveToken()) {
+  const token = (await getDriveToken()) ?? (connecting ? await waitForToken(120_000) : null);
+  if (!token) {
     setSync({ driveConnected: false });
     if (!quiet) toast(`Tap “Connect Google Drive” in Settings to download “${t.title}”.`);
     return null;

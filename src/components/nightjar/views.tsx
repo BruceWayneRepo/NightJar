@@ -197,8 +197,10 @@ export function ArtistsView() {
 }
 
 export function ArtistView({ name }: { name: string }) {
-  const tracks = useStore((s) => s.tracks.filter((t) => t.artist === name));
-  const albums = useStore((s) => s.albums.filter((a) => a.artist === name));
+  const allTracks = useStore((s) => s.tracks);
+  const allAlbums = useStore((s) => s.albums);
+  const tracks = useMemo(() => allTracks.filter((t) => t.artist === name), [allTracks, name]);
+  const albums = useMemo(() => allAlbums.filter((a) => a.artist === name), [allAlbums, name]);
   const ids = tracks.map((t) => t.id);
   return (
     <div className="nj-page">

@@ -103,6 +103,8 @@ export const syncHooks: {
   tracksChanged?: () => void;
   /** Fetch a song that's in your account but not on this device. */
   downloadCloud?: (track: Track, quiet: boolean) => Promise<Blob | null>;
+  /** Called straight from a tap on a song that's only in Drive, so Drive access can be renewed in time. */
+  beforeCloudPlay?: () => void;
   /** Is this song saved in your account? (then removing it here keeps it in playlists) */
   inCloud?: (songKey: string) => { driveId: string | null } | null;
 } = {};
@@ -328,6 +330,8 @@ async function startAt(index: number) {
 
 /** Play a track, with the given list as the queue (defaults to the whole library). */
 export function playTrack(id: string, list?: string[]) {
+  const target = trackById(id);
+  if (target?.storage === "cloud" && target.driveId) syncHooks.beforeCloudPlay?.();
   const base = list && list.length ? list : state.tracks.map((t) => t.id);
   let queue = base.slice();
   let index = Math.max(0, queue.indexOf(id));
@@ -439,6 +443,8 @@ export function clearUpcoming() {
 }
 
 export function jumpTo(position: number) {
+  const target = trackById(state.queue[position]);
+  if (target?.storage === "cloud" && target.driveId) syncHooks.beforeCloudPlay?.();
   void startAt(position);
 }
 
@@ -765,10 +771,16 @@ export function setSettingsFromRemote(s: SyncedSettings, updatedAt: number) {
 
 export { saveLibraryIndex };
 
-/** "Download to this device" from the song menu. */
-export async function downloadTrack(id: string) {
+/** "Download to this device" from the song menu, and "Download all" (quiet). Returns false if it failed. */
+export async function downloadTrack(id: string, quiet = false) {
   const t = trackById(id);
-  if (!t || t.storage !== "cloud") return;
-  const url = await urlFor(t);
-  if (url) toast(`“${t.title}” is now on this device`);
+  if (!t || t.storage !== "cloud") return true;
+  if (!quiet) syncHooks.beforeCloudPlay?.();
+  const url = await urlFor(t, quiet);
+  if (url && quiet && state.queue[state.index] !== id) {
+    URL.revokeObjectURL(url);
+    urlCache.delete(id);
+  }
+  if (url && !quiet) toast(`“${t.title}” is now on this device`);
+  return Boolean(url);
 }

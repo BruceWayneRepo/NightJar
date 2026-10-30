@@ -44,12 +44,34 @@ export function driveToken() {
   return null;
 }
 
-async function call(url: string, init: RequestInit = {}) {
+/* Silent renewal: when the always-connected helper is set up, sync.ts plugs in a function that
+   gets a fresh access key from it without any popup. */
+let refresher: (() => Promise<string | null>) | null = null;
+let refreshing: Promise<string | null> | null = null;
+export function setTokenRefresher(fn: (() => Promise<string | null>) | null) {
+  refresher = fn;
+}
+
+/** A working access key: the current one, or a new one from the helper. Null if a tap is needed. */
+export async function getDriveToken(): Promise<string | null> {
   const t = driveToken();
+  if (t) return t;
+  if (!refresher) return null;
+  refreshing ??= refresher()
+    .catch(() => null)
+    .finally(() => {
+      refreshing = null;
+    });
+  return refreshing;
+}
+
+async function call(url: string, init: RequestInit = {}, retried = false): Promise<Response> {
+  const t = await getDriveToken();
   if (!t) throw new DriveAuthError("Google Drive isn't connected");
   const res = await fetch(url, { ...init, headers: { ...(init.headers ?? {}), Authorization: `Bearer ${t}` } });
   if (res.status === 401) {
     clearDriveToken();
+    if (!retried && refresher) return call(url, init, true);
     throw new DriveAuthError("Google Drive access expired");
   }
   if (!res.ok) throw new Error(`Google Drive error ${res.status}: ${(await res.text()).slice(0, 200)}`);
