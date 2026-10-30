@@ -26,13 +26,19 @@ Do this on the laptop, signed in to Chrome with the Google account you want to u
    These values are safe to share: they only name the project. Your data is protected by sign-in and the rules.
 
 ## 5. Allow Google Drive (for song backup)
-1. Open https://console.cloud.google.com and pick the `nightjar` project at the top.
-2. Search for **Google Drive API** → open it → **Enable**.
-3. Left menu: **Google Auth Platform** (or "OAuth consent screen").
-   - **Audience**: if it says "Testing", tap **Add users** and add your Gmail address.
-   - **Data access** → **Add or remove scopes** → tick `.../auth/drive.file` → **Update** → **Save**.
+1. Open Google Cloud Console and select the `nightjar` project.
+2. Enable the **Google Drive API**.
+3. In Google Auth Platform, add the `.../auth/drive.file` scope.
+4. Open the OAuth **Web application** client and add this authorized redirect URI:
+   `https://night-jar-five.vercel.app/drive-callback.html`
+5. In Vercel → your `night-jar` project → **Settings → Environment Variables**, add:
+   - `GOOGLE_CLIENT_ID` — the OAuth Web client ID.
+   - `GOOGLE_CLIENT_SECRET` — the matching client secret.
+   Keep the secret in Vercel only; never commit it or paste it into chat.
+6. Redeploy the Vercel project.
+7. Open the Vercel-hosted Nightjar, sign in, then choose **Settings → Keep Google Drive connected** and approve once.
 
-That's it. After the next deploy, open Nightjar → Settings → **Sign in with Google**.
+The Vercel API helper stores an encrypted refresh credential server-side and returns short-lived access tokens after verifying the signed-in Firebase user. GitHub Pages can host the static app, but it cannot run this Vercel helper; use the Vercel address for automatic Drive renewal.
 
 ## What syncs
 - Playlists, crossfade and equalizer: live, on every device you sign in on.
@@ -43,7 +49,6 @@ That's it. After the next deploy, open Nightjar → Settings → **Sign in with 
 - Volume stays per device.
 
 ## Good to know
-- Google only lets Nightjar into Drive for about an hour at a time. If uploads or downloads stop,
-  tap **Connect Google Drive** in Settings.
+- Google access tokens are short-lived, but the Vercel helper renews them automatically when configured. If you revoke Nightjar's Google permission, change OAuth credentials, or the refresh grant is invalidated, reconnect Drive once in Settings.
 - Free Firestore limits (50,000 reads and 20,000 writes a day) are far more than one person uses.
 - Song files count towards your normal Google Drive storage.

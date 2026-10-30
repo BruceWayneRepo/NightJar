@@ -31,7 +31,7 @@ export function ListenView({ onImport }: { onImport: () => void }) {
     <div className="nj-page">
       <PageHead eyebrow="Library" title="Listening room">
         <p className="nj-lede">
-          Files you import stay in this browser. The sessions already here are original Nightjar pieces, so the room isn’t empty.
+          Your collection, ready when you are. Import music or sign in to bring your library across devices.
         </p>
       </PageHead>
       <label className="nj-search">
@@ -44,7 +44,14 @@ export function ListenView({ onImport }: { onImport: () => void }) {
         )}
       </label>
 
-      {results ? (
+      {tracks.length === 0 ? (
+        <section className="nj-section nj-library-empty">
+          <Empty title="Your listening room is waiting.">
+            <p>Import your first album to build your personal music library. Your files stay on this device unless you enable cloud backup.</p>
+            <button className="nj-btn nj-btn-primary" onClick={onImport}><Import size={16} /> Import your music</button>
+          </Empty>
+        </section>
+      ) : results ? (
         <>
           {results.albums.length > 0 && (
             <section className="nj-section">
@@ -93,14 +100,14 @@ export function ListenView({ onImport }: { onImport: () => void }) {
           )}
           <section className="nj-section">
             <h2 className="nj-h2">Songs</h2>
-            <div className="nj-song-list">{tracks.filter((t) => t.storage === "catalog").map((t) => <SongRow key={t.id} track={t} list={allIds} />)}</div>
+            <div className="nj-song-list">{tracks.slice().sort(byNewest).slice(0, 8).map((t) => <SongRow key={t.id} track={t} list={allIds} />)}</div>
           </section>
           <section className="nj-section nj-drop-hint">
             <Import size={20} />
             <div>
               <p className="nj-strong">Bring your own music</p>
               <p className="nj-muted">
-                Drop audio files anywhere, or use Import. WAV, FLAC, AIFF, MP3, M4A, OGG and Opus are read on the device; nothing is uploaded.
+                Drop audio files anywhere, or use Import. WAV, FLAC, AIFF, MP3, M4A, OGG and Opus are read on the device and stay there unless you turn on Google Drive backup.
               </p>
             </div>
             <button className="nj-btn" onClick={onImport}>Import audio</button>
@@ -116,7 +123,7 @@ export function AlbumsView() {
   return (
     <div className="nj-page">
       <PageHead eyebrow="Library" title="Albums" />
-      <div className="nj-album-grid">{albums.map((a) => <AlbumCard key={a.id} album={a} />)}</div>
+      {albums.length ? <div className="nj-album-grid">{albums.map((a) => <AlbumCard key={a.id} album={a} />)}</div> : <Empty title="No albums yet.">Import music to build your album library.</Empty>}
     </div>
   );
 }
@@ -180,7 +187,7 @@ export function ArtistsView() {
   return (
     <div className="nj-page">
       <PageHead eyebrow="Library" title="Artists" />
-      <div className="nj-artist-list">
+      {artists.length ? <div className="nj-artist-list">
         {artists.map((a) => (
           <button key={a.name} className="nj-artist" onClick={() => navigate({ name: "artist", name2: a.name })}>
             <Artwork src={a.art} alt="" glow={a.glow} size={52} round={26} />
@@ -191,7 +198,7 @@ export function ArtistsView() {
             <ChevronRight size={16} />
           </button>
         ))}
-      </div>
+      </div> : <Empty title="No artists yet.">Artists appear here when you import or sync music.</Empty>}
     </div>
   );
 }
@@ -268,7 +275,7 @@ export function SongsView() {
           </select>
         </label>
       </div>
-      <div className="nj-song-list">{sorted.map((t) => <SongRow key={t.id} track={t} list={ids} />)}</div>
+      {sorted.length ? <div className="nj-song-list">{sorted.map((t) => <SongRow key={t.id} track={t} list={ids} />)}</div> : <Empty title="Your song library is empty.">Import audio to see your tracks here.</Empty>}
     </div>
   );
 }

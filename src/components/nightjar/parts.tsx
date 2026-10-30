@@ -151,30 +151,60 @@ export function Bars() {
 
 export function SeekBar({ current, duration, onSeek, className = "" }: { current: number; duration: number; onSeek: (s: number) => void; className?: string }) {
   const [drag, setDrag] = useState<number | null>(null);
+  const pending = useRef<number | null>(null);
   const value = drag ?? current;
-  const pct = duration > 0 ? Math.min(100, (value / duration) * 100) : 0;
+  const pct = duration > 0 ? Math.min(100, Math.max(0, (value / duration) * 100)) : 0;
+
+  const commit = () => {
+    const next = pending.current;
+    pending.current = null;
+    setDrag(null);
+    if (next !== null && Number.isFinite(next) && duration > 0) {
+      onSeek(Math.max(0, Math.min(duration, next)));
+    }
+  };
+
+  const update = (raw: string) => {
+    const next = Number(raw);
+    if (!Number.isFinite(next)) return;
+    pending.current = next;
+    setDrag(next);
+  };
+
   return (
     <input
       type="range"
       className={`nj-range nj-seek ${className}`}
       min={0}
-      max={duration || 1}
-      step={0.1}
-      value={duration ? value : 0}
-      disabled={!duration}
+      max={duration > 0 ? duration : 1}
+      step={0.05}
+      value={duration > 0 ? Math.min(duration, Math.max(0, value)) : 0}
+      disabled={!duration || duration <= 0}
       aria-label="Seek"
       aria-valuetext={`${formatTime(value)} of ${formatTime(duration)}`}
       style={{ ["--pct" as string]: `${pct}%` }}
-      onChange={(e) => setDrag(Number(e.target.value))}
-      onPointerUp={() => {
-        if (drag !== null) onSeek(drag);
-        setDrag(null);
+      onChange={(e) => update(e.currentTarget.value)}
+      onPointerUp={commit}
+      onPointerCancel={commit}
+      onLostPointerCapture={commit}
+      onKeyDown={(e) => {
+        // Arrow keys jump 5 s (10 s for Page Up/Down). The fine pointer step is far too small for keys.
+        const jump = { ArrowLeft: -5, ArrowDown: -5, ArrowRight: 5, ArrowUp: 5, PageDown: -10, PageUp: 10 }[e.key];
+        if (jump === undefined || !(duration > 0)) return;
+        e.preventDefault();
+        const base = pending.current ?? current;
+        pending.current = Math.max(0, Math.min(duration, base + jump));
+        commit();
       }}
-      onKeyUp={() => {
-        if (drag !== null) onSeek(drag);
-        setDrag(null);
+      onKeyUp={(e) => {
+        if (e.key === "Home" || e.key === "End") commit();
       }}
-      onBlur={() => setDrag(null)}
+      onBlur={() => {
+        if (pending.current !== null) commit();
+        else {
+          setDrag(null);
+        }
+      }}
     />
   );
 }

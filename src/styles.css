@@ -313,3 +313,57 @@ kbd { font-family: var(--sans); font-size: 12px; padding: 1px 6px; border: 1px s
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
 }
+
+
+/* ---------- Interaction refinement ---------- */
+.nj-seek {
+  height: 28px;
+  padding-block: 8px;
+  touch-action: pan-y;
+  -webkit-tap-highlight-color: transparent;
+}
+.nj-seek::-webkit-slider-runnable-track { height: 5px; border-radius: 999px; }
+.nj-seek::-moz-range-track,
+.nj-seek::-moz-range-progress { height: 5px; border-radius: 999px; }
+.nj-seek::-webkit-slider-thumb {
+  width: 13px;
+  height: 13px;
+  margin-top: -4px;
+  transition: transform 140ms ease, box-shadow 140ms ease;
+}
+.nj-seek:hover::-webkit-slider-thumb,
+.nj-seek:focus-visible::-webkit-slider-thumb {
+  transform: scale(1.18);
+  box-shadow: 0 0 0 5px color-mix(in srgb, var(--glow) 22%, transparent);
+}
+.nj-seek::-moz-range-thumb { width: 13px; height: 13px; }
+.nj-seek:hover::-moz-range-thumb,
+.nj-seek:focus-visible::-moz-range-thumb {
+  box-shadow: 0 0 0 5px color-mix(in srgb, var(--glow) 22%, transparent);
+}
+.nj-nav-item, .nj-tab, .nj-btn, .nj-icon-btn, .nj-album-card {
+  -webkit-tap-highlight-color: transparent;
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+.nj-library-empty {
+  max-width: 680px;
+  margin: clamp(28px, 7vh, 76px) auto 0;
+  padding: clamp(18px, 4vw, 34px);
+  border: 1px solid var(--line-soft);
+  border-radius: 18px;
+  background:
+    radial-gradient(ellipse at 50% 0%, color-mix(in srgb, var(--accent) 12%, transparent), transparent 68%),
+    linear-gradient(145deg, color-mix(in srgb, var(--bg-raise) 88%, transparent), var(--bg-sunk));
+}
+.nj-library-empty .nj-empty { padding: 42px 16px; }
+.nj-library-empty .nj-empty-title { color: var(--text); font-family: var(--serif); font-size: clamp(22px, 3vw, 30px); }
+.nj-library-empty .nj-empty-body { display: grid; justify-items: center; gap: 18px; max-width: 420px; color: var(--text-2); }
+.nj-library-empty .nj-empty-body p { margin: 0; }

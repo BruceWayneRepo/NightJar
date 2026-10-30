@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { formatBytes } from "@/lib/nightjar/format";
 import { requestPersistentStorage, storageUsage } from "@/lib/nightjar/idb";
 import { installApp, usePwa } from "@/lib/nightjar/pwa";
-import { setCrossfade, setEq, setVolume, useEngine, useStore } from "@/lib/nightjar/store";
+import { navigateBack, setCrossfade, setEq, setVolume, useEngine, useStore } from "@/lib/nightjar/store";
 import { PageHead } from "./parts";
 import { AccountCard } from "./account";
 
@@ -37,7 +37,9 @@ export function SettingsView() {
 
   return (
     <div className="nj-page nj-settings">
-      <PageHead eyebrow="Nightjar" title="Settings" />
+      <PageHead eyebrow="Nightjar" title="Settings">
+        <button className="nj-back" onClick={navigateBack} aria-label="Back to Home">← Back to Home</button>
+      </PageHead>
 
       <AccountCard />
 

@@ -16,18 +16,18 @@ Open it once on your phone, then tap **Install** (Settings → App, or Chrome �
 
 **Accounts and sync (optional):** see [SETUP-SYNC.md](SETUP-SYNC.md). Without it, Nightjar works fully on one device.
 
-If `public/audio/roost.wav` or `platform.wav` are missing, run `python scripts/make_sample_songs.py` (needs numpy).
 
 ## What's inside
 
 - **Listening room:** albums, songs, search, play all, shuffle.
 - **Albums, Artists, Songs, Playlists, Queue** views; ··· menu on every song (play next, add to queue, add to playlist, go to album or artist, remove).
 - **Now playing:** large artwork with a glow from the album colour, live visualizer, signal-path details.
-- **Import:** pick or drop WAV, FLAC, AIFF, MP3, M4A, OGG, Opus. Tags, cover art and real format details are read on the device and stored in IndexedDB. Nothing is uploaded.
+- **Import:** pick or drop WAV, FLAC, AIFF, MP3, M4A, OGG, Opus. Tags, cover art and real format details are read on the device and stored in IndexedDB. Audio stays local unless you explicitly enable Google Drive backup.
 - **Playback engine:** two-deck crossfade (works with the screen off), 5-band EQ with presets, repeat and shuffle, lock-screen and headset controls (Media Session), keyboard shortcuts.
 - **Storage:** asks the browser to keep the library safe, shows space used and free.
 - Works on phones (bottom tabs and mini player) and desktops (sidebar and player bar).
-- **Offline + install (1.2):** a service worker saves the app, covers and sample songs on first visit; installs like a normal app on Android; shows "Update ready · Reload" instead of cutting off music.
+- **Offline + install:** a service worker saves the app shell and product assets on first visit; imported music stays in IndexedDB and remains available offline; updates are offered without unexpectedly cutting off music.
+- **Clean library:** Nightjar ships without demo albums or sample tracks. Your library begins empty until you import or sync your own music.
 - **Sync (1.3, optional):** Google sign-in; playlists, crossfade and EQ sync live between devices; songs are recognised across devices by a fingerprint of the file; song files can be backed up to a "Nightjar Music" folder in your own Google Drive and download on first play elsewhere. Works offline and catches up when back online.
 
 ## Files
@@ -38,7 +38,7 @@ If `public/audio/roost.wav` or `platform.wav` are missing, run `python scripts/m
 | `src/lib/nightjar/store.ts` | Library, queue, shuffle/repeat, playlists, settings, import |
 | `src/lib/nightjar/metadata.ts` | Reads WAV / FLAC / AIFF / MP3 headers, tags and cover art |
 | `src/lib/nightjar/idb.ts` | On-device file storage |
-| `src/lib/nightjar/catalog.ts` | The built-in sample albums |
+| `src/lib/nightjar/catalog.ts` | Empty initial catalogue and album grouping for user music |
 | `src/lib/nightjar/format.ts` | Display formatting (kHz, kbps, time, sizes, signal path) |
 | `src/lib/nightjar/pwa.ts`, `src/sw.ts` | Offline support and install prompt |
 | `src/lib/nightjar/sync.ts` | Account sync (Firebase Auth + Firestore), loaded only when set up |
@@ -51,4 +51,4 @@ If `public/audio/roost.wav` or `platform.wav` are missing, run `python scripts/m
 
 ## Changes from the Drive upload (Oct 2026)
 
-The original upload stopped at files starting with "o", so the screens, types, styles and build files were missing. They were rebuilt to match the original screenshots, around the original engine, catalog, format and storage code. The project moved from TanStack Start + Grok sign-in to a plain Vite + React static site, since a local-first player needs no server or account. "Roost" and "Platform" were recreated because their audio files were lost.
+The original upload stopped at files starting with "o", so the screens, types, styles and build files were missing. They were rebuilt to match the original screenshots, around the original engine, catalog, format and storage code. The project moved from TanStack Start + Grok sign-in to a plain Vite + React static site. The application now starts with an empty, user-owned music library rather than bundled demo albums.

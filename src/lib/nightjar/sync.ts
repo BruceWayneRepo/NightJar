@@ -81,6 +81,8 @@ const remotePlaylists = new Map<string, RemotePlaylist>();
 /** Songs in a synced playlist that this device can't show yet; kept so they aren't dropped on save. */
 const unresolved = new Map<string, string[]>();
 const writingSongs = new Set<string>();
+const songWriteAttempts = new Map<string, number>();
+const playlistWriteAttempts = new Map<string, number>();
 let userDoc: RemoteUser = {};
 let songsLoaded = false;
 let playlistsLoaded = false;
@@ -295,6 +297,8 @@ async function renewViaHelper(): Promise<string | null> {
       body: JSON.stringify({ sealed: userDoc.driveSealed, idToken: await user.getIdToken() }),
     });
     const out = (await res.json()) as { access_token?: string; expires_in?: number; error?: string };
+    // The user may have switched accounts while the refresh request was in flight.
+    if (auth.currentUser?.uid !== user.uid || uid !== user.uid) return null;
     if (out.access_token) {
       setDriveToken(out.access_token, Math.max(60, (out.expires_in ?? 3600) - 300));
       setSync({ driveConnected: true });
@@ -336,18 +340,31 @@ export function downloadAll() {
   beforeCloudPlay();
   void (async () => {
     let done = 0;
+    let failed = 0;
     setSync({ downloadingAll: { done, total: list.length } });
     for (const t of list) {
-      const ok = await downloadTrack(t.id, true);
-      if (!ok) {
-        toast(driveToken() ? `Couldn’t download “${t.title}”. Stopped; tap Download all to retry.` : "Download paused: Google Drive needs connecting (Settings).");
-        break;
+      try {
+        const ok = await downloadTrack(t.id, true);
+        if (!ok) {
+          failed++;
+        } else {
+          done++;
+        }
+      } catch {
+        failed++;
       }
-      done++;
-      setSync({ downloadingAll: { done, total: list.length } });
+      setSync({ downloadingAll: { done: done + failed, total: list.length } });
+      // If authorization is no longer available, continuing would only repeat
+      // the same auth failure for every remaining file.
+      if (failed > 0 && !driveToken() && !canRenewSilently()) break;
     }
     setSync({ downloadingAll: null });
-    if (done === list.length) toast(`All ${done} songs are now on this device`);
+    if (failed) {
+      const remaining = Math.max(0, list.length - done - failed);
+      toast(`Downloaded ${done} of ${list.length}. ${failed} failed${remaining ? `; ${remaining} not attempted` : ""}. Retry Download all when ready.`);
+    } else {
+      toast(`Downloaded all ${done} songs to this device.`);
+    }
   })();
 }
 
@@ -433,6 +450,9 @@ async function attach(user: User) {
       { includeMetadataChanges: true },
       (snap) => {
         for (const c of snap.docChanges()) {
+          // Firestore emits local optimistic snapshots before the server accepts
+          // a write. Do not treat those pending documents as cloud-confirmed.
+          if (c.doc.metadata.hasPendingWrites) continue;
           if (c.type === "removed") remoteSongs.delete(c.doc.id);
           else remoteSongs.set(c.doc.id, c.doc.data() as RemoteSong);
         }
@@ -452,6 +472,7 @@ async function attach(user: User) {
       { includeMetadataChanges: true },
       (snap) => {
         for (const c of snap.docChanges()) {
+          if (c.doc.metadata.hasPendingWrites) continue;
           if (c.type === "removed") remotePlaylists.delete(c.doc.id);
           else remotePlaylists.set(c.doc.id, c.doc.data() as RemotePlaylist);
         }
@@ -466,11 +487,13 @@ async function attach(user: User) {
 
   syncHooks.playlistsChanged = (changed, deleted) => {
     if (!uid || !playlistsLoaded) return;
-    changed.forEach(writePlaylist);
-    deleted.forEach(writeTombstone);
+    changed.forEach((playlist) => { void writePlaylist(playlist); });
+    deleted.forEach((id) => { void writeTombstone(id); });
   };
   syncHooks.settingsChanged = (settings, at) => {
-    if (uid) void setDoc(doc(db, "users", uid), { settings, settingsUpdatedAt: at }, { merge: true });
+    const me = uid;
+    if (me) void setDoc(doc(db, "users", me), { settings, settingsUpdatedAt: at }, { merge: true })
+      .catch(() => toast("Playback settings could not sync yet. Your local settings are safe."));
   };
   syncHooks.tracksChanged = () => {
     if (!uid || !songsLoaded) return;
@@ -486,9 +509,13 @@ async function attach(user: User) {
 }
 
 function detach(announce = true) {
+  const hadAccount = Boolean(uid);
   unsubs.forEach((u) => u());
   unsubs = [];
   uid = null;
+  // Access tokens are scoped to the Google account. Never carry one across a
+  // Firebase sign-out or account switch in the same browser session.
+  if (hadAccount) clearDriveToken();
   remoteSongs.clear();
   remotePlaylists.clear();
   unresolved.clear();
@@ -610,17 +637,47 @@ async function pushSongs() {
         updatedAt: now,
         driveId: null,
       };
-      if (uid !== me) return;
-      remoteSongs.set(key, song);
-      void setDoc(doc(db, "users", me, "songs", key), song).finally(() => writingSongs.delete(key));
+      if (uid !== me) {
+        writingSongs.delete(key);
+        break;
+      }
+      // Hand the write to Firestore straight away so it is queued (and kept across restarts) even
+      // offline, but only advertise the song as remotely present after Firestore confirms it.
+      void setDoc(doc(db, "users", me, "songs", key), song)
+        .then(() => {
+          if (uid !== me) return;
+          remoteSongs.set(key, song);
+          songWriteAttempts.delete(key);
+          void runBackup();
+        })
+        .catch(() => songWriteFailed(key, me))
+        .finally(() => writingSongs.delete(key));
     } catch {
+      // Reading the cover failed before the write started.
       writingSongs.delete(key);
+      songWriteFailed(key, me);
     }
   }
   void runBackup();
 }
 
+/** Bounded retry for a song record Firestore rejected. */
+function songWriteFailed(key: string, me: string) {
+  const attempts = (songWriteAttempts.get(key) ?? 0) + 1;
+  songWriteAttempts.set(key, attempts);
+  if (attempts <= 5 && uid === me) {
+    const delay = Math.min(60_000, 2_000 * 2 ** (attempts - 1));
+    window.setTimeout(() => {
+      if (uid === me) void pushSongs();
+    }, delay);
+  } else if (attempts === 6) {
+    toast("A song could not sync to your account. Check your connection and retry.");
+  }
+}
+
 let backingUp = false;
+/** A song was confirmed while a backup run was in progress: run once more afterwards. */
+let backupAgain = false;
 /** Upload this phone's songs to your Google Drive (when backup is on). */
 async function runBackup() {
   if (!uid) return;
@@ -628,15 +685,18 @@ async function runBackup() {
     getState().tracks.filter((t) => t.storage === "local" && t.songKey && remoteSongs.has(t.songKey) && !remoteSongs.get(t.songKey)!.driveId);
   const count = userDoc.backup ? waiting().length : 0;
   setSync({ songsWaiting: count, driveConnected: Boolean(driveToken()) || canRenewSilently() });
-  if (!userDoc.backup || backingUp || !count) return;
+  if (backingUp) {
+    backupAgain = true;
+    return;
+  }
+  if (!userDoc.backup || !count) return;
   backingUp = true;
   const token = await getDriveToken();
-  backingUp = false;
   if (!token) {
+    backingUp = false;
     setSync({ driveConnected: false });
     return;
   }
-  backingUp = true;
   const me = uid;
   try {
     for (const t of waiting()) {
@@ -649,9 +709,12 @@ async function runBackup() {
       refreshStatus();
       const ext = t.fileName?.match(/\.[^.]+$/)?.[0] ?? "";
       const driveId = await uploadSong(blob, t.fileName ?? `${t.artist} - ${t.title}${ext}`, key);
+      // Do not mark the in-memory record as backed up until Firestore confirms
+      // the Drive file ID. If this write fails, the next retry finds the same
+      // Drive file by appProperties and safely retries the metadata write.
+      await setDoc(doc(db, "users", me, "songs", key), { driveId, updatedAt: Date.now() }, { merge: true });
       const r = remoteSongs.get(key);
       if (r) remoteSongs.set(key, { ...r, driveId });
-      await setDoc(doc(db, "users", me, "songs", key), { driveId, updatedAt: Date.now() }, { merge: true });
       setSync({ songsWaiting: waiting().length });
     }
   } catch (e) {
@@ -661,6 +724,10 @@ async function runBackup() {
     backingUp = false;
     setSync({ uploading: null, songsWaiting: userDoc.backup ? waiting().length : 0 });
     refreshStatus();
+    if (backupAgain) {
+      backupAgain = false;
+      void runBackup();
+    }
   }
 }
 
@@ -753,23 +820,62 @@ function applyPlaylists() {
     }
   }
   if (changed) setPlaylistsFromRemote(result.sort((a, b) => a.createdAt - b.createdAt));
-  upload.forEach(writePlaylist);
+  upload.forEach((playlist) => { void writePlaylist(playlist); });
 }
 
-function writePlaylist(p: Playlist) {
-  if (!uid) return;
+/**
+ * Playlist saves are handed to Firestore immediately, in the order you make them. Firestore keeps
+ * that order (and keeps the queue across restarts while offline), so an edit followed by a delete
+ * can never lose the delete. The confirmed-remote map only moves forward in time, and a rejected
+ * write is retried with your newest local copy.
+ */
+function confirmPlaylist(id: string, data: RemotePlaylist, me: string) {
+  if (uid !== me) return;
+  const known = remotePlaylists.get(id);
+  if (!known || known.updatedAt <= data.updatedAt) remotePlaylists.set(id, data);
+  if (data.deleted) unresolved.delete(id);
+  playlistWriteAttempts.delete(id);
+}
+
+function playlistWriteFailed(id: string, name: string, me: string) {
+  const attempts = (playlistWriteAttempts.get(id) ?? 0) + 1;
+  playlistWriteAttempts.set(id, attempts);
+  if (attempts <= 5) {
+    window.setTimeout(() => {
+      if (uid !== me) return;
+      // Retry with whatever this device has now: the newest edit, or the deletion.
+      const latest = getState().playlists.find((item) => item.id === id);
+      if (latest) void writePlaylist(latest);
+      else void writeTombstone(id);
+    }, Math.min(60_000, 2_000 * 2 ** (attempts - 1)));
+  } else if (attempts === 6) {
+    toast(name ? `Playlist “${name}” could not sync. Your local copy is safe; try again when online.` : "A playlist deletion could not sync. It stays deleted on this device; try again when online.");
+  }
+}
+
+async function writePlaylist(p: Playlist) {
+  const me = uid;
+  if (!me) return;
   const tracks = getState().tracks;
   const keys = p.trackIds.map((id) => keyOf(tracks.find((t) => t.id === id))).filter((k): k is string => Boolean(k));
   for (const k of unresolved.get(p.id) ?? []) if (!keys.includes(k)) keys.push(k);
   const data: RemotePlaylist = { name: p.name, songs: keys, createdAt: p.createdAt, updatedAt: p.updatedAt ?? Date.now(), deleted: false };
-  remotePlaylists.set(p.id, data);
-  void setDoc(doc(db, "users", uid, "playlists", p.id), data);
+  try {
+    await setDoc(doc(db, "users", me, "playlists", p.id), data);
+    confirmPlaylist(p.id, data, me);
+  } catch {
+    playlistWriteFailed(p.id, p.name, me);
+  }
 }
 
-function writeTombstone(id: string) {
-  if (!uid) return;
+async function writeTombstone(id: string) {
+  const me = uid;
+  if (!me) return;
   const data: RemotePlaylist = { name: "", songs: [], createdAt: remotePlaylists.get(id)?.createdAt ?? Date.now(), updatedAt: Date.now(), deleted: true };
-  remotePlaylists.set(id, data);
-  unresolved.delete(id);
-  void setDoc(doc(db, "users", uid, "playlists", id), data);
+  try {
+    await setDoc(doc(db, "users", me, "playlists", id), data);
+    confirmPlaylist(id, data, me);
+  } catch {
+    playlistWriteFailed(id, "", me);
+  }
 }

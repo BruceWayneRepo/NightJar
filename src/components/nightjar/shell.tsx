@@ -3,6 +3,7 @@ import { engine } from "@/lib/nightjar/engine";
 import {
   getState,
   importFiles,
+  initNavigation,
   loadLibrary,
   navigate,
   next,
@@ -109,6 +110,7 @@ export function Shell() {
   const dragDepth = useRef(0);
 
   useEffect(() => {
+    initNavigation();
     void loadLibrary();
   }, []);
 

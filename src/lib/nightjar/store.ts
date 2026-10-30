@@ -216,10 +216,64 @@ export function currentTrack() {
   return trackById(state.queue[state.index]);
 }
 
+let navigationReady = false;
+
+function scrollToTop() {
+  if (typeof window === "undefined") return;
+  window.scrollTo({ top: 0, behavior: "auto" });
+  document.getElementById("nj-main")?.scrollTo({ top: 0, behavior: "auto" });
+}
+
+/**
+ * Keep the browser history aligned with in-app navigation. This makes browser
+ * Back and Android's system Back gesture behave like normal app navigation.
+ */
+export function initNavigation() {
+  if (typeof window === "undefined" || navigationReady) return;
+  navigationReady = true;
+  const current = window.history.state as { nightjarView?: View } | null;
+  if (!current?.nightjarView) {
+    window.history.replaceState({ ...(current ?? {}), nightjarView: state.view }, "", window.location.href);
+  }
+  window.addEventListener("popstate", (event) => {
+    const previous = (event.state as { nightjarView?: View } | null)?.nightjarView;
+    // Settings is a utility destination: Back always returns to the listening
+    // home, never to the More hub that happened to contain its entry point.
+    const target: View = state.view.name === "settings"
+      ? { name: "listen" }
+      : previous ?? { name: "listen" };
+    window.history.replaceState({ ...(window.history.state ?? {}), nightjarView: target }, "", window.location.href);
+    set({ view: target });
+    scrollToTop();
+  });
+}
+
 export function navigate(view: View) {
+  if (typeof window !== "undefined") {
+    if (!navigationReady) initNavigation();
+    const same = JSON.stringify(state.view) === JSON.stringify(view);
+    if (!same) window.history.pushState({ nightjarView: view }, "", window.location.href);
+  }
   set({ view });
-  window.scrollTo({ top: 0 });
-  document.getElementById("nj-main")?.scrollTo({ top: 0 });
+  scrollToTop();
+}
+
+/** Explicit in-app Back action for screens that provide their own back control. */
+export function navigateBack() {
+  if (state.view.name === "settings") {
+    const home: View = { name: "listen" };
+    if (typeof window !== "undefined") {
+      window.history.replaceState({ ...(window.history.state ?? {}), nightjarView: home }, "", window.location.href);
+    }
+    set({ view: home });
+    scrollToTop();
+    return;
+  }
+  if (typeof window !== "undefined" && window.history.state?.nightjarView) {
+    window.history.back();
+    return;
+  }
+  navigate({ name: "listen" });
 }
 
 export function setNowPlayingOpen(open: boolean) {
@@ -570,7 +624,14 @@ export async function loadLibrary() {
         void _ignored;
         restored.push({ ...rest, artwork });
       }
-      if (restored.length) set({ tracks: [...CATALOG_TRACKS, ...restored] });
+      if (restored.length) {
+        const merged = new Map<string, Track>();
+        // Local files win over their cloud placeholders; cloud-only tracks are
+        // retained if Firebase finished loading while IndexedDB was restoring.
+        for (const track of restored) merged.set(track.id, track);
+        for (const track of state.tracks) if (!merged.has(track.id)) merged.set(track.id, track);
+        set({ tracks: [...merged.values()] });
+      }
     }
   } catch {
     toast("Couldn’t read your imported library from this browser.");
