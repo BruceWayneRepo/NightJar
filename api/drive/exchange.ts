@@ -1,6 +1,6 @@
 // POST /api/drive/exchange { code, redirectUri, idToken }
 // One-time: turns Google's consent code into a fresh access key plus a sealed refresh key.
-import { body, configured, googleToken, json, seal, verifyUser } from "../_drive";
+import { body, configured, googleToken, json, seal, verifyUser } from "../_drive.js";
 
 export async function POST(req: Request) {
   if (!configured()) return json({ error: "not-configured" }, 503);

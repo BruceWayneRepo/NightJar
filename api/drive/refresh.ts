@@ -1,5 +1,5 @@
 // POST /api/drive/refresh { sealed, idToken }: a new one-hour Drive access key, no popup.
-import { body, configured, googleToken, json, unseal, verifyUser } from "../_drive";
+import { body, configured, googleToken, json, unseal, verifyUser } from "../_drive.js";
 
 export async function POST(req: Request) {
   if (!configured()) return json({ error: "not-configured" }, 503);
