@@ -10,7 +10,7 @@ Do this on the laptop, signed in to Chrome with the Google account you want to u
 ## 2. Turn on Google sign-in
 1. Left menu: **Build → Authentication → Get started**.
 2. **Sign-in method** tab → **Google** → switch **Enable** on → pick your email as support email → **Save**.
-3. **Settings** tab → **Authorized domains** → **Add domain** → type `brucewaynerepo.github.io` → **Add**.
+3. **Settings** tab → **Authorized domains** → **Add domain** → type `night-jar-five.vercel.app` → **Add** (and `brucewaynerepo.github.io` too).
 
 ## 3. Create the database
 1. Left menu: **Build → Firestore Database → Create database**.

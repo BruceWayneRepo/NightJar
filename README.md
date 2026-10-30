@@ -10,7 +10,8 @@ npm run dev        # open the address it prints
 npm run build      # static site in dist/, ready for GitHub Pages or any host
 ```
 
-**Live site:** every push to `main` publishes to GitHub Pages (`.github/workflows/deploy.yml`).
+**Live site:** https://night-jar-five.vercel.app (install from this one: it has its own address, so Android can install it as an app).
+Every push to `main` also publishes https://brucewaynerepo.github.io/NightJar/ (`.github/workflows/deploy.yml`).
 Open it once on your phone, then tap **Install** (Settings → App, or Chrome ⋮ → Install app). After that it opens offline.
 
 **Accounts and sync (optional):** see [SETUP-SYNC.md](SETUP-SYNC.md). Without it, Nightjar works fully on one device.
