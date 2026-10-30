@@ -109,8 +109,35 @@ async function findByKey(songKey: string) {
   return res.files[0]?.id ?? null;
 }
 
+/** Send the file to the upload address Google gave us, reporting progress (big lossless files take a while). */
+function putFile(url: string, blob: Blob, type: string, token: string, onProgress?: (fraction: number) => void): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const x = new XMLHttpRequest();
+    x.open("PUT", url);
+    x.setRequestHeader("Content-Type", type);
+    x.setRequestHeader("Authorization", `Bearer ${token}`);
+    x.upload.onprogress = (e) => {
+      if (e.lengthComputable && onProgress) onProgress(e.loaded / e.total);
+    };
+    x.onload = () => {
+      if (x.status === 401) {
+        clearDriveToken();
+        reject(new DriveAuthError("Google Drive access expired"));
+      } else if (x.status >= 200 && x.status < 300) {
+        try {
+          resolve((JSON.parse(x.responseText) as { id: string }).id);
+        } catch {
+          reject(new Error("Google Drive sent an unexpected reply after the upload"));
+        }
+      } else reject(new Error(`Google Drive refused the upload (${x.status}) ${x.responseText.slice(0, 160)}`));
+    };
+    x.onerror = () => reject(new Error("The connection dropped during the upload"));
+    x.send(blob);
+  });
+}
+
 /** Upload one song. Returns its Drive file id. */
-export async function uploadSong(blob: Blob, fileName: string, songKey: string): Promise<string> {
+export async function uploadSong(blob: Blob, fileName: string, songKey: string, onProgress?: (fraction: number) => void): Promise<string> {
   const existing = await findByKey(songKey);
   if (existing) return existing;
   const folder = await ensureFolder();
@@ -122,18 +149,14 @@ export async function uploadSong(blob: Blob, fileName: string, songKey: string):
     headers: { "Content-Type": "application/json; charset=UTF-8", "X-Upload-Content-Type": type, "X-Upload-Content-Length": String(blob.size) },
     body: JSON.stringify(meta),
   });
-  const location = start.headers.get("Location");
-  if (location) {
-    const put = await fetch(location, { method: "PUT", headers: { "Content-Type": type }, body: blob });
-    if (!put.ok) throw new Error(`Upload failed (${put.status})`);
-    return ((await put.json()) as { id: string }).id;
-  }
-  // Fallback: single multipart request.
-  const form = new FormData();
-  form.append("metadata", new Blob([JSON.stringify(meta)], { type: "application/json" }));
-  form.append("file", blob);
-  const res = await call(`${UPLOAD}/files?uploadType=multipart&fields=id`, { method: "POST", body: form });
-  return ((await res.json()) as { id: string }).id;
+  // Google returns the upload address in "Location"; if the browser can't read that header, the
+  // same address can be built from the upload id Google always exposes.
+  const uploadId = start.headers.get("X-GUploader-UploadID");
+  const location = start.headers.get("Location") ?? (uploadId ? `${UPLOAD}/files?uploadType=resumable&fields=id&upload_id=${encodeURIComponent(uploadId)}` : null);
+  if (!location) throw new Error("Google Drive didn’t return an upload address");
+  const token = await getDriveToken();
+  if (!token) throw new DriveAuthError("Google Drive isn't connected");
+  return putFile(location, blob, type, token, onProgress);
 }
 
 export async function downloadSong(fileId: string): Promise<Blob> {

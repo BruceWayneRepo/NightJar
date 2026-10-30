@@ -18,6 +18,10 @@ export type SyncState = {
   /** Songs on this device waiting to go up to Drive. */
   songsWaiting: number;
   uploading: string | null;
+  /** Upload progress of the current song, 0–1. */
+  uploadPct: number | null;
+  /** Why the last backup attempt stopped (shown in Settings). */
+  backupError: string | null;
   /** The always-connected Drive helper is set up on this site. */
   helper: boolean;
   /** Drive renews by itself (helper set up and you've connected once). */
@@ -37,6 +41,8 @@ let state: SyncState = {
   songsBackedUp: 0,
   songsWaiting: 0,
   uploading: null,
+  uploadPct: null,
+  backupError: null,
   helper: false,
   alwaysConnected: false,
   downloadingAll: null,

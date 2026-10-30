@@ -126,7 +126,7 @@ export function SongRow({ track, list, showArt = true, number, playlistId, onRem
           <span className="nj-song-sub">
             {track.artist} · {specLine(track.format)}
             {track.playback === "unsupported" && " · can’t play in this browser"}
-            {track.storage === "cloud" && (track.driveId ? " · in your Drive" : " · on your other device")}
+            {track.storage === "cloud" && (track.driveId ? " · in your Drive" : " · waiting for upload")}
           </span>
         </span>
         <span className="nj-song-time">{formatTime(track.duration)}</span>
@@ -149,63 +149,97 @@ export function Bars() {
   );
 }
 
-export function SeekBar({ current, duration, onSeek, className = "" }: { current: number; duration: number; onSeek: (s: number) => void; className?: string }) {
+/**
+ * Seek bar that follows the finger, mouse or pen directly (pointer events + pointer capture),
+ * instead of the browser's built-in range slider, whose touch handling on Android is unreliable.
+ * Tap anywhere to jump, drag to scrub, release to seek. Keyboard: arrows ±5 s, Page Up/Down ±10 s,
+ * Home/End to the start/end.
+ */
+export function SeekBar({ current, duration, onSeek, onScrub, className = "" }: { current: number; duration: number; onSeek: (s: number) => void; onScrub?: (s: number | null) => void; className?: string }) {
+  const bar = useRef<HTMLDivElement>(null);
+  const pointer = useRef<number | null>(null);
+  const last = useRef<number | null>(null);
   const [drag, setDrag] = useState<number | null>(null);
-  const pending = useRef<number | null>(null);
-  const value = drag ?? current;
-  const pct = duration > 0 ? Math.min(100, Math.max(0, (value / duration) * 100)) : 0;
+  const ok = duration > 0 && Number.isFinite(duration);
+  const clamp = (t: number) => Math.max(0, Math.min(duration, t));
+  const value = clamp(drag ?? current);
+  const pct = ok ? (value / duration) * 100 : 0;
 
-  const commit = () => {
-    const next = pending.current;
-    pending.current = null;
-    setDrag(null);
-    if (next !== null && Number.isFinite(next) && duration > 0) {
-      onSeek(Math.max(0, Math.min(duration, next)));
-    }
+  const at = (clientX: number) => {
+    const r = bar.current?.getBoundingClientRect();
+    if (!r || r.width <= 0) return 0;
+    return clamp(((clientX - r.left) / r.width) * duration);
   };
-
-  const update = (raw: string) => {
-    const next = Number(raw);
-    if (!Number.isFinite(next)) return;
-    pending.current = next;
-    setDrag(next);
+  const show = (t: number | null) => {
+    setDrag(t);
+    onScrub?.(t);
+  };
+  const finish = (t: number | null) => {
+    pointer.current = null;
+    last.current = null;
+    show(null);
+    if (t !== null && ok) onSeek(clamp(t));
+  };
+  const jump = (t: number) => {
+    if (!ok) return;
+    onSeek(clamp(t));
   };
 
   return (
-    <input
-      type="range"
-      className={`nj-range nj-seek ${className}`}
-      min={0}
-      max={duration > 0 ? duration : 1}
-      step={0.05}
-      value={duration > 0 ? Math.min(duration, Math.max(0, value)) : 0}
-      disabled={!duration || duration <= 0}
+    <div
+      ref={bar}
+      className={`nj-seekbar ${drag !== null ? "is-dragging" : ""} ${className}`}
+      role="slider"
+      tabIndex={ok ? 0 : -1}
       aria-label="Seek"
+      aria-disabled={!ok}
+      aria-valuemin={0}
+      aria-valuemax={ok ? Math.round(duration) : 0}
+      aria-valuenow={Math.round(value)}
       aria-valuetext={`${formatTime(value)} of ${formatTime(duration)}`}
       style={{ ["--pct" as string]: `${pct}%` }}
-      onChange={(e) => update(e.currentTarget.value)}
-      onPointerUp={commit}
-      onPointerCancel={commit}
-      onLostPointerCapture={commit}
-      onKeyDown={(e) => {
-        // Arrow keys jump 5 s (10 s for Page Up/Down). The fine pointer step is far too small for keys.
-        const jump = { ArrowLeft: -5, ArrowDown: -5, ArrowRight: 5, ArrowUp: 5, PageDown: -10, PageUp: 10 }[e.key];
-        if (jump === undefined || !(duration > 0)) return;
+      onPointerDown={(e) => {
+        if (!ok || (e.pointerType === "mouse" && e.button !== 0)) return;
         e.preventDefault();
-        const base = pending.current ?? current;
-        pending.current = Math.max(0, Math.min(duration, base + jump));
-        commit();
+        pointer.current = e.pointerId;
+        e.currentTarget.setPointerCapture(e.pointerId);
+        const t = at(e.clientX);
+        last.current = t;
+        show(t);
       }}
-      onKeyUp={(e) => {
-        if (e.key === "Home" || e.key === "End") commit();
+      onPointerMove={(e) => {
+        if (pointer.current !== e.pointerId) return;
+        const t = at(e.clientX);
+        last.current = t;
+        show(t);
       }}
-      onBlur={() => {
-        if (pending.current !== null) commit();
-        else {
-          setDrag(null);
-        }
+      onPointerUp={(e) => {
+        if (pointer.current !== e.pointerId) return;
+        finish(at(e.clientX));
       }}
-    />
+      onPointerCancel={(e) => {
+        if (pointer.current !== e.pointerId) return;
+        finish(last.current);
+      }}
+      onLostPointerCapture={(e) => {
+        if (pointer.current !== e.pointerId) return;
+        finish(last.current);
+      }}
+      onKeyDown={(e) => {
+        const step: Record<string, number> = { ArrowLeft: -5, ArrowDown: -5, ArrowRight: 5, ArrowUp: 5, PageDown: -10, PageUp: 10 };
+        if (e.key in step) jump(value + step[e.key]);
+        else if (e.key === "Home") jump(0);
+        else if (e.key === "End") jump(duration - 0.25);
+        else return;
+        e.preventDefault();
+        e.stopPropagation(); // don't let the app-wide shortcuts seek a second time
+      }}
+    >
+      <div className="nj-seekbar-track">
+        <div className="nj-seekbar-fill" />
+      </div>
+      <div className="nj-seekbar-thumb" />
+    </div>
   );
 }
 

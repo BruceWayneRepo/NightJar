@@ -527,7 +527,7 @@ function detach(announce = true) {
   syncHooks.inCloud = undefined;
   if (announce) {
     setCloudTracks([], new Map());
-    setSync({ user: null, status: "signed-out", backup: false, songsInAccount: 0, songsBackedUp: 0, songsWaiting: 0, uploading: null });
+    setSync({ user: null, status: "signed-out", backup: false, songsInAccount: 0, songsBackedUp: 0, songsWaiting: 0, uploading: null, uploadPct: null, backupError: null });
   }
 }
 
@@ -577,7 +577,7 @@ function toTrack(key: string, r: RemoteSong): Track {
     playback: "ready",
     playbackNote: r.driveId
       ? "In your Google Drive. It downloads to this device the first time you play it."
-      : "Saved in your account, but the file is only on your other device. Turn on song backup there.",
+      : "Waiting for upload: open Nightjar on the device that has this file, with Drive backup on, until uploads finish.",
     fingerprint: null,
     year: r.year ?? undefined,
     songKey: key,
@@ -676,6 +676,17 @@ function songWriteFailed(key: string, me: string) {
 }
 
 let backingUp = false;
+let backupRetry: number | null = null;
+type WakeLockLike = { release: () => Promise<void> };
+/** Keep the screen awake while songs upload: browsers pause uploads when the screen turns off. */
+async function holdScreen(): Promise<WakeLockLike | null> {
+  try {
+    const wl = (navigator as Navigator & { wakeLock?: { request: (t: "screen") => Promise<WakeLockLike> } }).wakeLock;
+    return wl ? await wl.request("screen") : null;
+  } catch {
+    return null;
+  }
+}
 /** A song was confirmed while a backup run was in progress: run once more afterwards. */
 let backupAgain = false;
 /** Upload this phone's songs to your Google Drive (when backup is on). */
@@ -691,6 +702,10 @@ async function runBackup() {
   }
   if (!userDoc.backup || !count) return;
   backingUp = true;
+  if (backupRetry !== null) {
+    window.clearTimeout(backupRetry);
+    backupRetry = null;
+  }
   const token = await getDriveToken();
   if (!token) {
     backingUp = false;
@@ -698,6 +713,7 @@ async function runBackup() {
     return;
   }
   const me = uid;
+  const screen = await holdScreen();
   try {
     for (const t of waiting()) {
       if (uid !== me || !userDoc.backup) break;
@@ -705,24 +721,35 @@ async function runBackup() {
       if (remoteSongs.get(key)?.driveId) continue;
       const blob = await idbGet(`audio:${t.id}`);
       if (!blob) continue;
-      setSync({ uploading: t.title });
+      setSync({ uploading: t.title, uploadPct: 0 });
       refreshStatus();
       const ext = t.fileName?.match(/\.[^.]+$/)?.[0] ?? "";
-      const driveId = await uploadSong(blob, t.fileName ?? `${t.artist} - ${t.title}${ext}`, key);
+      let shown = 0;
+      const driveId = await uploadSong(blob, t.fileName ?? `${t.artist} - ${t.title}${ext}`, key, (f) => {
+        if (f - shown >= 0.02 || f === 1) {
+          shown = f;
+          setSync({ uploadPct: f });
+        }
+      });
       // Do not mark the in-memory record as backed up until Firestore confirms
       // the Drive file ID. If this write fails, the next retry finds the same
       // Drive file by appProperties and safely retries the metadata write.
       await setDoc(doc(db, "users", me, "songs", key), { driveId, updatedAt: Date.now() }, { merge: true });
       const r = remoteSongs.get(key);
       if (r) remoteSongs.set(key, { ...r, driveId });
-      setSync({ songsWaiting: waiting().length });
+      setSync({ songsWaiting: waiting().length, backupError: null });
     }
   } catch (e) {
-    if (e instanceof DriveAuthError) setSync({ driveConnected: false });
-    else toast("Song backup paused: couldn’t reach Google Drive. It will retry later.");
+    const reason = e instanceof Error ? e.message : String(e);
+    if (e instanceof DriveAuthError) setSync({ driveConnected: false, backupError: "Google Drive needs connecting." });
+    else {
+      setSync({ backupError: `${reason}. Retrying in 30 s.` });
+      if (uid === me) backupRetry = window.setTimeout(() => void runBackup(), 30_000);
+    }
   } finally {
+    void screen?.release().catch(() => {});
     backingUp = false;
-    setSync({ uploading: null, songsWaiting: userDoc.backup ? waiting().length : 0 });
+    setSync({ uploading: null, uploadPct: null, songsWaiting: userDoc.backup ? waiting().length : 0 });
     refreshStatus();
     if (backupAgain) {
       backupAgain = false;
@@ -734,7 +761,7 @@ async function runBackup() {
 async function download(t: Track, quiet: boolean): Promise<Blob | null> {
   const driveId = (t.songKey && remoteSongs.get(t.songKey)?.driveId) || t.driveId;
   if (!driveId) {
-    if (!quiet) toast(`“${t.title}” is only on your other device. Turn on song backup there to play it here.`);
+    if (!quiet) toast(`“${t.title}” hasn’t been uploaded yet. Open Nightjar on the phone you imported it on, with Drive backup on, and keep it open until uploads finish.`);
     return null;
   }
   const token = (await getDriveToken()) ?? (connecting ? await waitForToken(120_000) : null);

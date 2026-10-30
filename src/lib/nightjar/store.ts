@@ -314,7 +314,7 @@ async function urlFor(track: Track, quiet = false): Promise<string | null> {
 /** Bring a song from your account onto this device; it then plays like any imported song. */
 async function downloadToDevice(track: Track, quiet: boolean): Promise<string | null> {
   if (!syncHooks.downloadCloud) return null;
-  if (!quiet) toast(`Downloading “${track.title}”…`);
+  if (!quiet && track.driveId) toast(`Downloading “${track.title}”…`);
   const blob = await syncHooks.downloadCloud(track, quiet);
   if (!blob) return null;
   await idbPut(`audio:${track.id}`, blob);

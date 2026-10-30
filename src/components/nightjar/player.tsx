@@ -68,13 +68,14 @@ function VolumeControl() {
 /** Desktop bar along the bottom. */
 export function PlayerBar() {
   const snap = useEngine();
+  const [scrub, setScrub] = useState<number | null>(null);
   useStore((s) => s.index);
   const track = currentTrack();
   return (
     <footer className="nj-playerbar" style={{ ["--glow" as string]: track?.glow ?? "#c45c26" }}>
       <div className="nj-playerbar-seek">
-        <span className="nj-time">{formatTime(snap.currentTime)}</span>
-        <SeekBar current={snap.currentTime} duration={snap.duration} onSeek={seek} />
+        <span className="nj-time">{formatTime(scrub ?? snap.currentTime)}</span>
+        <SeekBar current={snap.currentTime} duration={snap.duration} onSeek={seek} onScrub={setScrub} />
         <span className="nj-time">{formatTime(snap.duration)}</span>
       </div>
       <div className="nj-playerbar-row">
@@ -172,6 +173,7 @@ export function NowPlaying() {
   const snap = useEngine();
   const track = currentTrack();
   const [details, setDetails] = useState(false);
+  const [scrub, setScrub] = useState<number | null>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
@@ -204,8 +206,8 @@ export function NowPlaying() {
         </div>
         <Visualizer playing={snap.playing} glow={track.glow} />
         <div className="nj-np-seek">
-          <span className="nj-time">{formatTime(snap.currentTime)}</span>
-          <SeekBar current={snap.currentTime} duration={snap.duration} onSeek={seek} />
+          <span className="nj-time">{formatTime(scrub ?? snap.currentTime)}</span>
+          <SeekBar current={snap.currentTime} duration={snap.duration} onSeek={seek} onScrub={setScrub} />
           <span className="nj-time">{formatTime(snap.duration)}</span>
         </div>
         <Transport big />

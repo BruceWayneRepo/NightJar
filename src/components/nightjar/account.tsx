@@ -69,7 +69,17 @@ export function AccountCard() {
             <input type="checkbox" checked={s.backup} onChange={(e) => setBackup(e.target.checked)} />
             Back up my songs to Google Drive
           </label>
-          {s.uploading && <p className="nj-muted nj-small" style={{ margin: 0 }}>Uploading “{s.uploading}”…</p>}
+          {s.uploading && (
+            <p className="nj-muted nj-small" style={{ margin: 0 }}>
+              Uploading “{s.uploading}”{s.uploadPct !== null ? ` · ${Math.round(s.uploadPct * 100)}%` : "…"}
+            </p>
+          )}
+          {s.backup && s.songsWaiting > 0 && (
+            <p className="nj-muted nj-small" style={{ margin: 0 }}>
+              Keep Nightjar open (on Wi-Fi) until this reaches 0. Phones pause uploads when the app is closed; the screen stays on while uploading.
+            </p>
+          )}
+          {s.backupError && <p className="nj-error" style={{ margin: 0 }}>Backup problem: {s.backupError}</p>}
           {s.downloadingAll && (
             <p className="nj-muted nj-small" style={{ margin: 0 }}>
               Downloading to this phone: {s.downloadingAll.done} of {s.downloadingAll.total}…
